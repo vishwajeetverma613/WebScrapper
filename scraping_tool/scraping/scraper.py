@@ -3,7 +3,9 @@ import requests
 from bs4 import BeautifulSoup
 from scraping_tool.scraping.cache import product_cache
 from scraping_tool.scraping.utils import save_image
-from scraping_tool.storage.storage import save_to_json, JSONDataHandler
+from scraping_tool.storage.storage import JSONDataHandler
+import time
+import re
 
 class ProductScraper:
     def __init__(self, config, json_file_path, image_store_file_path):
@@ -13,12 +15,26 @@ class ProductScraper:
         self.data_handler = JSONDataHandler(json_file_path)
         self.image_store_file_path = image_store_file_path
 
-    def fetch_page(self, page_num):
+    def fetch_page(self, page_num, retries=3):
         url = f"{self.base_url}page/{page_num}/"
-        proxies = {"http": self.config.proxy, "https": self.config.proxy} if self.config.proxy else None
-        response = requests.get(url, timeout=10)
-        response.raise_for_status()
-        return response.content
+        for attempt in range(retries):
+            try:
+                response = requests.get(url, timeout=10)
+                response.raise_for_status()
+                return response.content
+            except requests.exceptions.RequestException:
+                time.sleep(5)
+                continue
+        return None
+    
+
+    # Remove non-numeric characters (including the currency symbol) and convert the price to an integer
+    def clean_price(self, price_str: str) -> int:
+        # Remove non-numeric characters (keeping only numbers and decimal points)
+        cleaned_price = re.sub(r"[^\d.]", "", price_str)
+        
+        # Convert the cleaned string to a float and then to an integer (if you want to discard decimals)
+        return int(float(cleaned_price))
 
 
     def parse_product_details(self, product_card):
@@ -29,7 +45,7 @@ class ProductScraper:
             
             # Extract product price
             price_element = product_card.find("ins") or product_card.find("bdi")
-            product_price = price_element.get_text(strip=True) if price_element else "Price Not Available"
+            product_price = self.clean_price(price_element.get_text(strip=True)) if price_element else None
 
 
             # Extract image URL
@@ -68,6 +84,9 @@ class ProductScraper:
     def scrape(self):
         for page_num in range(1, self.config.max_pages + 1):
             page_content = self.fetch_page(page_num)
+            if page_content is None:
+                print(f"Failed to retrieve page {page_num}")
+                continue
             soup = BeautifulSoup(page_content, "html.parser")
             product_cards = soup.find_all("ul", class_="products")
             for card in product_cards:
@@ -79,8 +98,10 @@ class ProductScraper:
 
     def update_cache(self, product_data):
         short_description = product_data["short_description"]
-        if product_cache.get(short_description) != short_description:
-            product_cache[short_description] = short_description
+        price = product_data["product_price"]
+        cached_price = product_cache.get(short_description)
+        if cached_price != price:
+            product_cache[short_description] = price
             self.products.append(product_data)
 
     def save_to_json(self):

@@ -7,7 +7,6 @@ app = FastAPI()
 security = HTTPBearer()
 
 def authenticate(token: str = Query(...)):
-    print(token)
     if token != STATIC_TOKEN:
         raise HTTPException(status_code=401, detail="Unauthorized")
     return token
@@ -16,6 +15,7 @@ def authenticate(token: str = Query(...)):
 async def start_scraping(config: ScraperConfig, token: str = Depends(authenticate)):
     scraper = ProductScraper(config, STORAGE_FILE_PATH, IMAGE_STORAGE_FILE_PATH)
     try:
+        print("Scraping Started")
         scraper.scrape()
         scraper.save_to_json()
         scraper.notify_status()
